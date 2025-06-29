@@ -1,76 +1,107 @@
-# type: ignore
-from tensorflow.keras.layers import Conv2D, BatchNormalization, Activation, UpSampling2D, Concatenate, Input
-from tensorflow.keras.models import Model
-from tensorflow.keras.applications import ResNet50
+import tensorflow as tf
+from tensorflow.keras.layers import Conv2D, BatchNormalization, Activation, UpSampling2D, Concatenate, Input # type: ignore
+from tensorflow.keras.models import Model # type: ignore
+from tensorflow.keras.applications import ResNet50 # type: ignore
+import numpy as np
 
-def conv_bn_act(x, filters, kernel_size=3, dilation_rate=1, activation='relu'):
-    """Convolution + BatchNorm + Activation block"""
-    x = Conv2D(filters, kernel_size, padding="same", dilation_rate=dilation_rate)(x)
+def residual_block(inputs, num_filters):
+    x = Conv2D(num_filters, 3, padding="same")(inputs)
     x = BatchNormalization()(x)
-    return Activation(activation)(x)
+    x = Activation("relu")(x)
+    x = Conv2D(num_filters, 3, padding="same")(x)
+    x = BatchNormalization()(x)
+    s = Conv2D(num_filters, 1, padding="same")(inputs)
+    s = BatchNormalization()(s)
+    x = Activation("relu")(x + s)
+    return x
 
-def residual_block(inputs, filters):
-    """Residual block with skip connection"""
-    x = conv_bn_act(inputs, filters)
-    x = Conv2D(filters, 3, padding="same")(x)
-    x = BatchNormalization()(x)
+def dilated_conv_block(inputs, num_filters):
+    x1 = Conv2D(num_filters, 3, padding="same", dilation_rate=3)(inputs)
+    x1 = BatchNormalization()(x1)
+    x1 = Activation("relu")(x1)
     
-    # Skip connection
-    skip = conv_bn_act(inputs, filters, kernel_size=1, activation=None)
-    return Activation("relu")(x + skip)
+    x2 = Conv2D(num_filters, 3, padding="same", dilation_rate=6)(inputs)
+    x2 = BatchNormalization()(x2)
+    x2 = Activation("relu")(x2)
+    
+    x3 = Conv2D(num_filters, 3, padding="same", dilation_rate=9)(inputs)
+    x3 = BatchNormalization()(x3)
+    x3 = Activation("relu")(x3)
+    
+    x = Concatenate()([x1, x2, x3])
+    x = Conv2D(num_filters, 1, padding="same")(x)
+    x = BatchNormalization()(x)
+    x = Activation("relu")(x)
+    return x
 
-def dilated_conv(inputs, filters):
-    """Multi-scale dilated convolution block"""
-    branches = [conv_bn_act(inputs, filters, dilation_rate=rate) for rate in [3, 6, 9]]
-    x = Concatenate()(branches)
-    return conv_bn_act(x, filters, kernel_size=1)
-
-def decoder_block(inputs, skip_features, filters):
-    """Decoder block with upsampling and skip connection"""
+def decoder_block(inputs, skip_features, num_filters):
     x = UpSampling2D((2, 2), interpolation="bilinear")(inputs)
     x = Concatenate()([x, skip_features])
-    return residual_block(x, filters)
+    x = residual_block(x, num_filters)
+    return x
 
-def build_model(input_shape):
-    """Build U-Net model with ResNet50 encoder"""
+def build_unet_model(input_shape=(512, 512, 3)):
     inputs = Input(input_shape)
+    backbone = ResNet50(include_top=False, weights="imagenet", input_tensor=inputs)
     
-    # Encoder (ResNet50)
-    resnet = ResNet50(include_top=False, weights="imagenet", input_tensor=inputs)
-    skip_layers = ["input_layer", "conv1_relu", "conv2_block3_out", "conv3_block4_out", "conv4_block6_out"]
-    skips = [resnet.get_layer(name).output for name in skip_layers]
+    # Get correct layer names
+    s1 = inputs
+    s2 = backbone.get_layer("conv1_relu").output
+    s3 = backbone.get_layer("conv2_block3_out").output
+    s4 = backbone.get_layer("conv3_block4_out").output
+    s5 = backbone.get_layer("conv4_block6_out").output
     
     # Bridge
-    bridge = dilated_conv(skips[-1], 1024)
+    bridge = dilated_conv_block(s5, 1024)
     
     # Decoder
-    filters = [512, 256, 128, 64]
-    x = bridge
-    decoder_outputs = []
-    
-    for i, (skip, f) in enumerate(zip(reversed(skips[1:-1]), filters)):
-        x = decoder_block(x, skip, f)
-        decoder_outputs.append(x)
-    
-    # Final decoder block
-    x = decoder_block(x, skips[0], filters[-1])
-    decoder_outputs.append(x)
+    d1 = decoder_block(bridge, s4, 512)
+    d2 = decoder_block(d1, s3, 256)
+    d3 = decoder_block(d2, s2, 128)
+    d4 = decoder_block(d3, s1, 64)
     
     # Multi-scale outputs
-    upsampling_factors = [8, 4, 2, 1]
-    outputs = []
+    y1 = UpSampling2D((8, 8), interpolation="bilinear")(d1)
+    y1 = Conv2D(1, 1, padding="same", activation="sigmoid")(y1)
     
-    for decoder_out, factor in zip(decoder_outputs, upsampling_factors):
-        if factor > 1:
-            y = UpSampling2D((factor, factor), interpolation="bilinear")(decoder_out)
-        else:
-            y = decoder_out
-        y = Conv2D(1, 1, padding="same", activation="sigmoid")(y)
-        outputs.append(y)
+    y2 = UpSampling2D((4, 4), interpolation="bilinear")(d2)
+    y2 = Conv2D(1, 1, padding="same", activation="sigmoid")(y2)
     
-    final_output = Concatenate()(outputs)
-    return Model(inputs, final_output, name="U-Net")
+    y3 = UpSampling2D((2, 2), interpolation="bilinear")(d3)
+    y3 = Conv2D(1, 1, padding="same", activation="sigmoid")(y3)
+    
+    y4 = Conv2D(1, 1, padding="same", activation="sigmoid")(d4)
+    
+    outputs = Concatenate()([y1, y2, y3, y4])
+    model = Model(inputs, outputs, name="ResNet50-UNet")
+    return model
+
+def test_model():
+    try:
+        print("Creating model...")
+        model = build_unet_model((512, 512, 3))
+        
+        print("Model created successfully")
+        print(f"Input shape: {model.input_shape}")
+        print(f"Output shape: {model.output_shape}")
+        print(f"Total parameters: {model.count_params():,}")
+        
+        print("Testing with dummy input...")
+        dummy_input = np.random.random((1, 512, 512, 3)).astype(np.float32)
+        output = model.predict(dummy_input, verbose=0)
+        print(f"Output shape: {output.shape}")
+        print("Model test passed")
+        
+        return model
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        return None
 
 if __name__ == "__main__":
-    model = build_model((512, 512, 3))
-    model.summary()
+    model = test_model()
+    
+    if model is not None:
+        print("\nMODEL SUMMARY")
+        print("=" * 50)
+        model.summary()

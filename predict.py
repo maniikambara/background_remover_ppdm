@@ -1,52 +1,92 @@
 import os
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-
 import numpy as np
 import cv2
-import pandas as pd
 from glob import glob
 from tqdm import tqdm
 import tensorflow as tf
-from train import create_dir
 
-""" Global parameters """
+# Global parameters
 image_h = 512
 image_w = 512
 
-if __name__ == "__main__":
-    """ Seeding """
+def create_dir(path):
+    """Create directory if not exists"""
+    os.makedirs(path, exist_ok=True)
+
+def preprocess_image(image_path):
+    """Load and preprocess image"""
+    image = cv2.imread(image_path, cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError(f"Cannot read image: {image_path}")
+    
+    h, w = image.shape[:2]
+    x = cv2.resize(image, (image_w, image_h))
+    x = (x / 255.0).astype(np.float32)
+    return image, np.expand_dims(x, 0), (w, h)
+
+def postprocess_mask(prediction, original_size):
+    """Process model prediction to mask"""
+    mask = prediction[0][:, :, -1] if prediction.ndim == 4 else prediction[0]
+    mask = cv2.resize(mask, original_size)
+    return np.expand_dims(mask, -1)
+
+def create_result_image(original, mask):
+    """Create side-by-side result image"""
+    masked = original * mask
+    h = original.shape[0]
+    divider = np.full((h, 10, 3), 128, dtype=original.dtype)
+    return np.concatenate([original, divider, masked], axis=1)
+
+def main():
+    # Setup
     np.random.seed(42)
     tf.random.set_seed(42)
+    
+    # Create output directory
+    create_dir(r'test/masks')
+    
+    # Load model
+    try:
+        model = tf.keras.models.load_model(r'files/model.keras')
+        print("Model loaded successfully")
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        return
+    
+    # Get test images
+    image_paths = glob(r'test/images/*')
+    if not image_paths:
+        print("No images found in the folder")
+        return
+    
+    print(f"Processing {len(image_paths)} images...")
+    
+    # Process each image
+    for path in tqdm(image_paths):
+        try:
+            # Extract filename
+            name = os.path.splitext(os.path.basename(path))[0]
+            
+            # Process image
+            original, processed, size = preprocess_image(path)
+            
+            # Predict
+            prediction = model.predict(processed, verbose=0)
+            
+            # Create mask
+            mask = postprocess_mask(prediction, size)
+            
+            # Create and save result
+            result = create_result_image(original, mask)
+            output_path = f"test/masks/{name}.png"
+            cv2.imwrite(output_path, result)
+            
+        except Exception as e:
+            print(f"Error processing {path}: {e}")
+            continue
+    
+    print("Processing completed!")
 
-    """ Directory for storing files """
-    create_dir("test/masks")
-
-    """ Loading model """
-    model = tf.keras.models.load_model("files/model.h5")
-
-    """ Load the dataset """
-    data_x = glob("test/images/*")
-
-    for path in tqdm(data_x, total=len(data_x)):
-        """ Extracting name """
-        name = path.split("/")[-1].split(".")[0]
-
-        """ Reading the image """
-        image = cv2.imread(path, cv2.IMREAD_COLOR)
-        h, w, _ = image.shape
-        x = cv2.resize(image, (image_w, image_h))
-        x = x/255.0
-        x = x.astype(np.float32) ## (h, w, 3)
-        x = np.expand_dims(x, axis=0) ## (1, h, w, 3)
-
-        """ Prediction """
-        y = model.predict(x, verbose=0)[0][:,:,-1]
-        y = cv2.resize(y, (w, h))
-        y = np.expand_dims(y, axis=-1)
-
-        """ Save the image """
-        masked_image = image * y
-        line = np.ones((h, 10, 3)) * 128
-        cat_images = np.concatenate([image, line, masked_image], axis=1)
-
-        cv2.imwrite(f"test/masks/{name}.png", cat_images)
+if __name__ == "__main__":
+    main()

@@ -55,7 +55,6 @@ def process_dataset(root_dir, num_images=2500):
                 os.remove(os.path.join(folder, fname))
 
 if __name__ == "__main__":
-    # Ganti dengan path ke dataset Anda
-    dataset_root = "people_segmentation"
+    dataset_root = r'people_segmentation'    
     process_dataset(dataset_root, num_images=2500)
     print("Dataset processing complete.")
