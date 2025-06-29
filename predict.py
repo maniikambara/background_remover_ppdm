@@ -7,8 +7,8 @@ from tqdm import tqdm
 import tensorflow as tf
 
 # Global parameters
-image_h = 512
-image_w = 512
+image_h = 256
+image_w = 256
 
 def create_dir(path):
     """Create directory if not exists"""
@@ -48,7 +48,7 @@ def main():
     
     # Load model
     try:
-        model = tf.keras.models.load_model(r'files/model.keras')
+        model = tf.keras.models.load_model(r'files/model.h5')
         print("Model loaded successfully")
     except Exception as e:
         print(f"Error loading model: {e}")

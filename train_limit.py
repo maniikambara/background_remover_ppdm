@@ -14,11 +14,11 @@ import psutil # type: ignore
 import time
 
 # Constants
-IMAGE_H = 256
-IMAGE_W = 256
-MAX_CPU_PERCENT = 80
-MAX_RAM_GB = 4
-MAX_GPU_PERCENT = 80
+IMAGE_H = 512
+IMAGE_W = 512
+MAX_CPU_PERCENT = 90
+MAX_RAM_GB = 5
+MAX_GPU_PERCENT = 90
 
 def setup_gpu():
     gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -27,7 +27,7 @@ def setup_gpu():
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
                 tf.config.experimental.set_virtual_device_configuration(
-                    gpu, [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=4608)]
+                    gpu, [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=5120)]
                 )
             print("GPU configured")
         except RuntimeError as e:
@@ -46,7 +46,7 @@ def monitor_resources():
                 ram_gb = memory.used / (1024**4)
                 
                 try:
-                    import pynvml
+                    import pynvml # type: ignore
                     pynvml.nvmlInit()
                     handle = pynvml.nvmlDeviceGetHandleByIndex(0)
                     gpu_util = pynvml.nvmlDeviceGetUtilizationRates(handle)
@@ -161,7 +161,7 @@ def main():
     input_shape = (IMAGE_H, IMAGE_W, 3)
     batch_size = 2
     lr = 1e-4
-    num_epochs = 100
+    num_epochs = 50
     
     dataset_path = r'people_segmentation_edited'
     model_path = os.path.join("files", "model.h5")
