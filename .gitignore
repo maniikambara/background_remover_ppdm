@@ -1,5 +1,2 @@
-files/model.h5
-files/training_log.csv
-__pycache__/model.cpython-39.pyc
-files/training_log.csv
+/__pycache__
 /files
