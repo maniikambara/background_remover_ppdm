@@ -12,12 +12,29 @@ from model import build_unet_model
 import threading
 import psutil # type: ignore
 import time
+import gc  # Add this
+
+# Add this class after the imports
+class GCCallback(tf.keras.callbacks.Callback):
+    def __init__(self, accumulation_steps=4):
+        self.accumulation_steps = accumulation_steps
+        self.accumulated_gradients = []
+        self.step = 0
+    
+    def on_train_batch_begin(self, batch, logs=None):
+        if self.step == 0:
+            self.accumulated_gradients = []
+    
+    def on_train_batch_end(self, batch, logs=None):
+        self.step += 1
+        if self.step >= self.accumulation_steps:
+            self.step = 0
 
 # Constants
-IMAGE_H = 512
-IMAGE_W = 512
+IMAGE_H = 256
+IMAGE_W = 256
 MAX_CPU_PERCENT = 90
-MAX_RAM_GB = 5
+MAX_RAM_GB = 8
 MAX_GPU_PERCENT = 90
 
 def setup_gpu():
@@ -186,6 +203,8 @@ def main():
         except:
             print("Mixed precision not available")
         
+        tf.config.experimental.enable_tensor_float_32_execution(False)
+        
         model.compile(
             loss="binary_crossentropy",
             optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
@@ -198,7 +217,8 @@ def main():
             ModelCheckpoint(model_path, monitor='val_loss', verbose=1, save_best_only=True, save_weights_only=False),
             ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=7, min_lr=1e-7, verbose=1),
             CSVLogger(csv_path),
-            EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True, verbose=1)
+            EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True, verbose=1),
+            GCCallback()
         ]
         
         print("Starting training...")

@@ -29,13 +29,22 @@ def postprocess_mask(prediction, original_size):
     """Process model prediction to mask"""
     mask = prediction[0][:, :, -1] if prediction.ndim == 4 else prediction[0]
     mask = cv2.resize(mask, original_size)
+    
+    # Convert to 0-255 range and ensure uint8 type
+    mask = np.clip(mask * 255, 0, 255).astype(np.uint8)
     return np.expand_dims(mask, -1)
 
 def create_result_image(original, mask):
     """Create side-by-side result image"""
-    masked = original * mask
+    # Ensure mask is in 0-1 range for multiplication
+    mask_normalized = mask.astype(np.float32) / 255.0
+    
+    # Apply mask to original image
+    masked = (original * mask_normalized).astype(np.uint8)
+    
     h = original.shape[0]
-    divider = np.full((h, 10, 3), 128, dtype=original.dtype)
+    divider = np.full((h, 10, 3), 128, dtype=np.uint8)
+    
     return np.concatenate([original, divider, masked], axis=1)
 
 def main():
@@ -80,6 +89,11 @@ def main():
             # Create and save result
             result = create_result_image(original, mask)
             output_path = f"test/masks/{name}.png"
+            
+            # Ensure result is uint8 before saving
+            if result.dtype != np.uint8:
+                result = result.astype(np.uint8)
+            
             cv2.imwrite(output_path, result)
             
         except Exception as e:
